@@ -214,10 +214,10 @@ class Item:
         """Write the accompanying tag text file for this item."""
         tag_filename = self.filename + ".txt"
         print(f"WRITING TAGS TO {tag_filename}")
-        tag_file = open(tag_filename, "w", encoding="utf-8")
-        tag_file.write(
-            f"creator:{self.creator}\nsource:{self.source}")
-        tag_file.close()
+        with open(tag_filename, "w", encoding="utf-8") as tag_file:
+            tag_file.write(
+                f"creator:{self.creator}\nsource:{self.source}")
+
 
 
 if __name__ == "__main__":
