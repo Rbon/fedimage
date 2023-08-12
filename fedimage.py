@@ -1,4 +1,9 @@
-# TODO: Refactor main() to iterate with an index.
+"""
+Check your mastodon/misskey follows, and download any media posted recently.
+"""
+
+
+# TODO: Refactor sync_feeds() to iterate with an index.
 
 
 import os
@@ -18,15 +23,17 @@ DRY_RUN = True
 
 
 def main():
-    initDirs()
-    args = getArgs()
+    """Main function."""
+    init_dirs()
+    args = get_args()
     if args.file:
-        generateFeedsFile(args)
-    syncFeeds()
+        generate_feeds_file(args)
+    # syncFeeds()
     CONN.close()
 
 
-def getArgs():
+def get_args():
+    """Get the command-line arguments, and return an argparse namespace."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         'file',
@@ -36,173 +43,181 @@ def getArgs():
     return args
 
 
-def generateFeedsFile(args):
-    with open(args.file) as usersFilename:
-        next(usersFilename) # skip the header line
+def generate_feeds_file(args):
+    """Generate feeds.txt from the kind of csv mastondon lets you export."""
+    print("Generating feeds file from CSV...")
+    with open(args.file, encoding="utf-8") as users_filename:
+        next(users_filename) # skip the header line
         output = []
-        for username in usersFilename:
+        for username in users_filename:
             username = username.strip()
-            matches = re.search("(.*)@(.*),.*,.*,", username)
-            output.append("https://{hostname}/@{username}.rss".format(
-                hostname = matches.group(2),
-                username = matches.group(1)))
-    with open(FEEDS_FILE, 'w') as feeds_file:
+            matches = re.search(r"(.*)@(.*),.*,.*,", username)
+            output.append(f"https://{matches.group(2)}/@{matches.group(1)}.rss")
+    with open(FEEDS_FILE, 'w', encoding="utf-8") as feeds_file:
         feeds_file.write("\n".join(output))
 
 
-def syncFeeds():
-    with open(FEEDS_FILE) as feedsFilename:
-        for feedURL in feedsFilename:
-            feedURL = feedURL.strip()
-            matches = re.search(".*:\/\/(.*)\/@(.*)\.rss", feedURL)
-            filename = "{user}@{hostname}.rss".format(
-                user = matches.group(2),
-                hostname = matches.group(1))
+def sync_feeds():
+    """Read feeds.txt and sync each feed, one by one."""
+    with open(FEEDS_FILE, encoding="utf-8") as feeds_filename:
+        for feed_url in feeds_filename:
+            feed_url = feed_url.strip()
+            matches = re.search(r".*:\/\/(.*)\/@(.*)\.rss", feed_url)
+            filename = f"{matches.group(2)}@{matches.group(1)}.rss"
 
-            downloadRSSFile(feedURL, FEED_DIR + "/" + filename)
-            parseFeed(FEED_DIR + "/" + filename)
+            download_rss_file(feed_url, FEED_DIR + "/" + filename)
+            parse_feed(FEED_DIR + "/" + filename)
 
             print(80*"-")
 
 
-def initDirs():
+def init_dirs():
+    "Create directories for feeds and downloads, if they don't already exist."
     for directory in [DL_DIR, FEED_DIR]:
         if not os.path.exists(directory):
             os.makedirs(directory)
 
 
-def downloadRSSFile(feedURL, filename):
-    print("FETCHING FEED FROM {feedURL}".format(feedURL=feedURL))
-    feedFile = requests.get(feedURL).content
+def download_rss_file(feed_url, filename):
+    """Fetch an rss file from a URL, and save it as the specified filename."""
+    print(f"FETCHING FEED FROM {feed_url}")
+    feed_file = requests.get(feed_url, timeout=30).content
     with open(filename, 'wb') as handler:
-        handler.write(feedFile)
+        handler.write(feed_file)
 
 
-def parseFeed(feedFilename):
-    creator = os.path.basename(os.path.splitext(feedFilename)[0])
-    print("CHECKING FOR MEDIA FROM {creator}\n".format(creator=creator))
+def parse_feed(feed_filename):
+    "Parse an RSS feed file, and run the media downloader on any media found."
+    creator = os.path.basename(os.path.splitext(feed_filename)[0])
+    print(f"CHECKING FOR MEDIA FROM {creator}\n")
 
-    c = CONN.cursor()
-    c.execute("""CREATE TABLE if not exists '{table}' (
+    cursor = CONN.cursor()
+    cursor.execute(f"""CREATE TABLE if not exists '{creator}' (
             mediaURL text
-            )""".format(
-                table = creator))
+            )""")
     CONN.commit()
 
-    with open(feedFilename) as feed:
-        gotItem = False
-        textItem = {}
+    with open(feed_filename, encoding="utf-8") as feed:
+        got_item = False
+        text_item = {}
         for line in feed:
             line = line.strip()
             # print(line)
 
             if line == "<item>":
-                gotItem = True
+                got_item = True
                 continue
 
-            if gotItem:
+            if got_item:
                 if line == "</item>":
-                    if "mediaURL" in textItem:
+                    if "mediaURL" in text_item:
                         item = Item(
                             creator = creator,
-                            source = textItem["link"],
-                            mediaURL = textItem["mediaURL"])
-                        item.downloadMedia()
+                            source = text_item["link"],
+                            media_url = text_item["mediaURL"])
+                        item.download_media()
                         print()
-                    gotItem = False
-                    textItem = {}
-                    
+                    got_item = False
+                    text_item = {}
                     continue
 
-                # print(line)
-                textItem["creator"] = creator
-                cdataMatch = re.search("<(.*)><!\[CDATA\[(.*)\]\]><\/.*>", line)
-                normalMatch = re.search("<(.*)>(.*)<\/.*>", line)
-                mediaMatch = re.search(
-                    '<enclosure url="(.*)" length=".*" type=".*"/>',
+                text_item["creator"] = creator
+                cdata_match = re.search(
+                    r"<(.*)><!\[CDATA\[(.*)\]\]><\/.*>",
                     line)
-                mastodonMediaMatch = re.search(
-                    '^<media:content url="(.*)" type=".*" fileSize=".*" medium=".*">$',
+                normal_match = re.search(r"<(.*)>(.*)<\/.*>", line)
+                media_match = re.search(
+                    r'<enclosure url="(.*)" length=".*" type=".*"/>',
                     line)
-                
-                if cdataMatch:
-                    textItem[cdataMatch.group(1)] = cdataMatch.group(2)
-                elif normalMatch:
-                    textItem[normalMatch.group(1)] = normalMatch.group(2)
-                elif mediaMatch:
-                    textItem["mediaURL"] = mediaMatch.group(1)
-                elif mastodonMediaMatch:
-                    textItem["mediaURL"] = mastodonMediaMatch.group(1)
+                mastodon_media_match = re.search(
+                    r'^<media:content url="(.*)" type=".*" fileSize=".*" medium=".*">$',
+                    line)
+
+                if cdata_match:
+                    text_item[cdata_match.group(1)] = cdata_match.group(2)
+                elif normal_match:
+                    text_item[normal_match.group(1)] = normal_match.group(2)
+                elif media_match:
+                    text_item["mediaURL"] = media_match.group(1)
+                elif mastodon_media_match:
+                    text_item["mediaURL"] = mastodon_media_match.group(1)
 
 
 class Item:
-    def __init__(self, creator, source, mediaURL):
+    """Represents each media items found in the RSS fields."""
+
+
+    def __init__(self, creator, source, media_url):
         self.creator = creator
         self.source = source
-        self.mediaURL = mediaURL
+        self.media_url = media_url
         self._filename = None
-        self._alreadyDownloaded = None
+        self._already_downloaded = None
 
 
     @property
     def filename(self):
-        if self._filename: return self._filename
+        """The basename of the media file on the server."""
+        if self._filename:
+            return self._filename
 
         self._filename = DL_DIR + "/" + re.search(
-            ".*\/([^\/].*)", self.mediaURL).group(1)
-        
+            r".*\/([^\/].*)", self.media_url).group(1)
         return self._filename
 
 
     @property
-    def alreadyDownloaded(self):
-        c = CONN.cursor()
-        c.execute("SELECT * FROM '{table}' WHERE mediaURL = '{mediaURL}'".format(
-            table = self.creator,
-            mediaURL = self.mediaURL))
-        data=c.fetchone()
-        
+    def already_downloaded(self):
+        "Returns a boolean representing if the item has been downloaded or not."
+        cursor = CONN.cursor()
+        cursor.execute(f"""
+            SELECT * FROM '{self.creator}'
+            WHERE mediaURL = '{self.media_url}'
+            """)
+        data=cursor.fetchone()
+
         if data is None:
-            self._alreadyDownloaded = False
+            self._already_downloaded = False
         else:
-            self._alreadyDownloaded = True
+            self._already_downloaded = True
 
-        return self._alreadyDownloaded
+        return self._already_downloaded
 
 
-    def addToDatabase(self):
-        c = CONN.cursor()
-        c.execute(
-            "INSERT INTO '%s' VALUES ('%s')" % (self.creator, self.mediaURL))
+    def add_to_database(self):
+        """Add to the database a record of this item."""
+        cursor = CONN.cursor()
+        cursor.execute(f"""
+            INSERT INTO '{self.creator}
+            'VALUES ('{self.media_url}')
+            """)
         CONN.commit()
 
 
-    def downloadMedia(self):
-        print("DOWNLOADING {mediaURL}".format(mediaURL = self.mediaURL))
+    def download_media(self):
+        """Download this media item, and save it to the downloads directory."""
+        print(f"DOWNLOADING {self.media_url}")
 
-        if self.alreadyDownloaded:
+        if self.already_downloaded:
             print("Already downloaded.")
             return
 
-        print("SAVING AS {filename}".format(filename = self.filename))
-        img_data = requests.get(self.mediaURL).content
+        print(f"SAVING AS {self.filename}")
+        img_data = requests.get(self.media_url, timeout=30).content
         with open(self.filename, 'wb') as handler:
             handler.write(img_data)
-        self.generateTagFile()
-        self.addToDatabase()
+        self.generate_tag_file()
+        self.add_to_database()
 
 
-    def generateTagFile(self):
-        tagFileName = self.filename + ".txt"
-        print("WRITING TAGS TO {tagFileName}".format(
-            tagFileName=tagFileName))
-        f = open(tagFileName, "w")
-        f.write(
-            "creator:{creator}\nsource:{source}".format(
-                creator = self.creator,
-                source = self.source)
-        )
-        f.close()
+    def generate_tag_file(self):
+        """Write the accompanying tag text file for this item."""
+        tag_filename = self.filename + ".txt"
+        print(f"WRITING TAGS TO {tag_filename}")
+        tag_file = open(tag_filename, "w", encoding="utf-8")
+        tag_file.write(
+            f"creator:{self.creator}\nsource:{self.source}")
+        tag_file.close()
 
 
 if __name__ == "__main__":
