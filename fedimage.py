@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 """
 Check your mastodon/misskey follows, and download any media posted recently.
 """
