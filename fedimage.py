@@ -72,7 +72,7 @@ def sync_feeds():
 
 
 def init_dirs():
-    "Create directories for feeds and downloads, if they don't already exist."
+    """Create the needed directories, if they don't already exist."""
     for directory in [DL_DIR, FEED_DIR]:
         if not os.path.exists(directory):
             os.makedirs(directory)
@@ -87,7 +87,7 @@ def download_rss_file(feed_url, filename):
 
 
 def parse_feed(feed_filename):
-    "Parse an RSS feed file, and run the media downloader on any media found."
+    """Parse an RSS feed file, and run the media downloader on any media."""
     creator = os.path.basename(os.path.splitext(feed_filename)[0])
     print(f"CHECKING FOR MEDIA FROM {creator}\n")
 
@@ -168,7 +168,7 @@ class Item:
 
     @property
     def already_downloaded(self):
-        "Returns a boolean representing if the item has been downloaded or not."
+        """Returns a boolean representing if the item has been downloaded."""
         cursor = CONN.cursor()
         cursor.execute(f"""
             SELECT * FROM '{self.creator}'
@@ -217,7 +217,6 @@ class Item:
         with open(tag_filename, "w", encoding="utf-8") as tag_file:
             tag_file.write(
                 f"creator:{self.creator}\nsource:{self.source}")
-
 
 
 if __name__ == "__main__":
