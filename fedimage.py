@@ -1,9 +1,9 @@
-# TODO: Load multiple rss feeds from a file.
-#       Refactor main() to iterate with an index.
+# TODO: Refactor main() to iterate with an index.
 
 
 import os
 import re
+import argparse
 import sqlite3
 import requests
 
@@ -14,10 +14,43 @@ CONN = sqlite3.connect('fedimage.db')
 DL_DIR = SCRIPT_PATH + "/downloads"
 FEED_DIR = SCRIPT_PATH + "/feeds"
 FEEDS_FILE = SCRIPT_PATH + "/feeds.txt"
+DRY_RUN = True
 
 
 def main():
     initDirs()
+    args = getArgs()
+    if args.file:
+        generateFeedsFile(args)
+    syncFeeds()
+    CONN.close()
+
+
+def getArgs():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        'file',
+        nargs='?',
+        help="A csv file containing account names.")
+    args = parser.parse_args()
+    return args
+
+
+def generateFeedsFile(args):
+    with open(args.file) as usersFilename:
+        next(usersFilename) # skip the header line
+        output = []
+        for username in usersFilename:
+            username = username.strip()
+            matches = re.search("(.*)@(.*),.*,.*,", username)
+            output.append("https://{hostname}/@{username}.rss".format(
+                hostname = matches.group(2),
+                username = matches.group(1)))
+    with open(FEEDS_FILE, 'w') as feeds_file:
+        feeds_file.write("\n".join(output))
+
+
+def syncFeeds():
     with open(FEEDS_FILE) as feedsFilename:
         for feedURL in feedsFilename:
             feedURL = feedURL.strip()
@@ -30,7 +63,6 @@ def main():
             parseFeed(FEED_DIR + "/" + filename)
 
             print(80*"-")
-    CONN.close()
 
 
 def initDirs():
