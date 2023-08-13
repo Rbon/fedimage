@@ -2,7 +2,32 @@
 
 
 """
-Checks your mastodon/misskey follows, and downloads any media posted recently.
+Fedimage
+
+Download media files from your mastodon/misskey follows.
+
+MIT License
+
+Copyright (c) 2023 Robin Bisho
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 """
 
 
@@ -11,10 +36,11 @@ import re
 import argparse
 import sqlite3
 import time
+import tempfile
 import requests
 
 
-DEBUG = False
+DEBUG = True
 
 
 class Fedimage:
@@ -23,28 +49,70 @@ class Fedimage:
 
     def __init__(self):
         self.script_path = os.path.dirname(os.path.realpath(__file__))
-        self.conn = sqlite3.connect("fedimage.db")
-        self.dl_dir = self.script_path + "/downloads"
-        self.feed_dir = self.script_path + "/feeds"
-        self.feeds_file = self.script_path + "/feeds.txt"
         self.cli_args = self._get_args()
-        self.verbosity = self.cli_args.verbosity
+        self.conn = sqlite3.connect("fedimage.db")
+        print(self.cli_args)
+        self.feeds_file = self.cli_args.feeds_file
         self.dl_list = []
 
 
     def _get_args(self):
         """Get the command-line arguments, and return an argparse namespace."""
-        parser = argparse.ArgumentParser()
+        parser = argparse.ArgumentParser(
+            prog='fedimage',
+            description="""
+                Download media files from your mastodon/misskey follows.
+            """)
         parser.add_argument(
-            'file',
-            nargs='?',
-            help="A csv file containing account names.")
+            'feeds_file',
+            help="""
+                A text file containing a newline-separated list RSS feed
+                URLs.
+            """)
         parser.add_argument(
             '-v', '--verbosity',
+            choices=[0, 1, 2],
             type=int,
             default=1,
-            help="Specify how verbose fedimage is. By default, this is 1."
-        )
+            help="""
+                Specify how verbose fedimage is. By default, this is 1. A
+                verbosity of 0 will completely silence fedimage.
+            """)
+        parser.add_argument(
+            '-m', '--media-dir',
+            default=self.script_path + "/media",
+            metavar="DIRECTORY",
+            help="""
+                The directory to save downloaded media. By default, fedimage
+                will create a 'media' directory wherever it is located, and
+                save any media there.
+            """)
+        parser.add_argument(
+            '-d', '--database',
+            default=self.script_path + "fedimage.db",
+            metavar="DIRECTORY",
+            help="""
+                The path for the database of downloaded media. Fedimage uses
+                this to ensure that files are only downloaded once. By default,
+                fedimage will create a database in the directory where fedimage
+                itself is located.
+            """)
+        parser.add_argument(
+            '-c', '--csv-file',
+            metavar="FILE",
+            help="""
+                Read follows from a CSV file exported from mastodon. Fedimage
+                will then write these exports to whatever you specify as
+                feeds_file, before downloading media as usual.
+            """)
+        parser.add_argument(
+            '-r', '--rss-dir',
+            default=None,
+            metavar="DIRECTORY",
+            help="""
+                The directory to save downloaded RSS feeds. By default, fedimage
+                will create a temporary directory to save feeds.
+            """)
         args = parser.parse_args()
         return args
 
@@ -54,22 +122,22 @@ class Fedimage:
         start_time = time.time()
         self.init_dirs()
         args = self.cli_args
-        if args.file:
-            self.generate_feeds_file(args)
+        if args.csv_file:
+            self.generate_feeds_file(args.csv_file)
         self.sync_feeds()
         self.conn.close()
-        if self.verbosity >= 1:
+        if self.cli_args.verbosity >= 1:
             total_time = round(time.time() - start_time, 2)
             print(
                 f"DOWNLOADED {len(self.dl_list)} FILES",
                 f"IN {total_time} SECONDS")
 
 
-    def generate_feeds_file(self, args):
+    def generate_feeds_file(self, csv_file):
         """Generate feeds.txt from the kind of csv mastondon lets you export."""
-        if self.verbosity >= 1:
-            print(f"GENERATING FEEDS FILE FROM {args.file}")
-        with open(args.file, encoding="utf-8") as users_filename:
+        if self.cli_args.verbosity >= 1:
+            print(f"GENERATING FEEDS FILE FROM {csv_file}")
+        with open(csv_file, encoding="utf-8") as users_filename:
             next(users_filename) # skip the header line
             output = []
             for username in users_filename:
@@ -82,22 +150,32 @@ class Fedimage:
 
 
     def sync_feeds(self):
+        """Choose the appropriate directory, and sync feeds."""
+        if self.cli_args.rss_dir is None:
+            with tempfile.TemporaryDirectory() as tmpdirname:
+                self._sync_feeds(tmpdirname)
+        else:
+            self._sync_feeds(self.cli_args.rss_dir)
+
+
+    def _sync_feeds(self, dirname):
         """Read feeds.txt and sync each feed, one by one."""
         with open(self.feeds_file, encoding="utf-8") as feeds_filename:
             for feed_url in feeds_filename:
                 feed_url = feed_url.strip()
                 matches = re.search(r".*:\/\/(.*)\/@(.*)\.rss", feed_url)
                 filename = f"{matches.group(2)}@{matches.group(1)}.rss"
-
-                self.download_rss_file(feed_url, self.feed_dir + "/" + filename)
-                self.parse_feed(self.feed_dir + "/" + filename)
-                if self.verbosity >= 1:
+                self.download_rss_file(
+                    feed_url,
+                    dirname + "/" + filename)
+                self.parse_feed(dirname + "/" + filename)
+                if self.cli_args.verbosity >= 1:
                     print(80*"-")
 
 
     def init_dirs(self):
         """Create the needed directories, if they don't already exist."""
-        for directory in [self.dl_dir, self.feed_dir]:
+        for directory in [self.cli_args.media_dir]:
             if not os.path.exists(directory):
                 os.makedirs(directory)
 
@@ -105,10 +183,10 @@ class Fedimage:
     def download_rss_file(self, feed_url, filename):
         """Fetch a feed from a URL, and save it as the specified filename."""
         if DEBUG:
-            if self.verbosity >= 1:
+            if self.cli_args.verbosity >= 1:
                 print(f"(FAKE) FETCHING FEED FROM {feed_url}")
             return
-        if self.verbosity >= 1:
+        if self.cli_args.verbosity >= 1:
             print(f"FETCHING FEED FROM {feed_url}")
         feed_file = requests.get(feed_url, timeout=30).content
         with open(filename, 'wb') as handler:
@@ -118,7 +196,7 @@ class Fedimage:
     def parse_feed(self, feed_filename):
         """Parse an RSS feed file, and download any media."""
         creator = os.path.basename(os.path.splitext(feed_filename)[0])
-        if self.verbosity >= 2:
+        if self.cli_args.verbosity >= 2:
             print(f"CHECKING FOR MEDIA FROM {creator}")
 
         cursor = self.conn.cursor()
@@ -146,8 +224,8 @@ class Fedimage:
                                 source = text_item["link"],
                                 media_url = text_item["mediaURL"],
                                 conn = self.conn,
-                                dl_dir = self.dl_dir,
-                                verbosity=self.verbosity)
+                                dl_dir = self.cli_args.media_dir,
+                                verbosity=self.cli_args.verbosity)
                             url = item.download_media()
                             if url is not None:
                                 self.dl_list.append(url)
@@ -228,8 +306,8 @@ class Item:
         """Add to the database a record of this item."""
         cursor = self.conn.cursor()
         cursor.execute(f"""
-            INSERT INTO '{self.creator}
-            'VALUES ('{self.media_url}')
+            INSERT INTO '{self.creator}'
+            VALUES ('{self.media_url}')
             """)
         self.conn.commit()
 
