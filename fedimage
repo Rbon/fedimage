@@ -40,7 +40,7 @@ import tempfile
 import requests
 
 
-DEBUG = True
+DEBUG = False
 
 
 class Fedimage:
