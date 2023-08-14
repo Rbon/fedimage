@@ -51,7 +51,6 @@ class Fedimage:
         self.script_path = os.path.dirname(os.path.realpath(__file__))
         self.cli_args = self._get_args()
         self.conn = sqlite3.connect("fedimage.db")
-        print(self.cli_args)
         self.feeds_file = self.cli_args.feeds_file
         self.dl_list = []
 
@@ -326,18 +325,21 @@ class Item:
             self.generate_tag_file()
             return self.media_url
 
+        if self.already_downloaded:
+            if self.verbosity >= 2:
+                print(f"DOWNLOADING {self.media_url}")
+                print("Already downloaded.")
+            return None
+
         if self.verbosity >= 1:
             print(f"DOWNLOADING {self.media_url}")
-        if self.already_downloaded:
-            if self.verbosity >= 1:
-                print("Already downloaded.")
-            return
-        if self.verbosity >= 2:
-            print(f"SAVING AS {self.filename}")
         img_data = requests.get(self.media_url, timeout=30).content
+        
+        if self.verbosity >= 2:
+                print(f"SAVING AS {self.filename}")
         with open(self.filename, 'wb') as handler:
             handler.write(img_data)
-        print(f"SAVING AS {self.filename}")
+
         self.generate_tag_file()
         self.add_to_database()
         return self.media_url
