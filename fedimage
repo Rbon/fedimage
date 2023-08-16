@@ -53,6 +53,7 @@ class Fedimage:
         self.conn = sqlite3.connect("fedimage.db")
         self.feeds_file = self.cli_args.feeds_file
         self.dl_list = []
+        self.total_feeds = self.validate_and_tally_feeds()
 
 
     def _get_args(self):
@@ -129,6 +130,7 @@ class Fedimage:
             total_time = round(time.time() - start_time, 2)
             print(
                 f"DOWNLOADED {len(self.dl_list)} FILES",
+                f"FROM {self.total_feeds} FEEDS",
                 f"IN {total_time} SECONDS")
 
 
@@ -160,10 +162,20 @@ class Fedimage:
     def _sync_feeds(self, dirname):
         """Read feeds.txt and sync each feed, one by one."""
         with open(self.feeds_file, encoding="utf-8") as feeds_filename:
+            feed_count = 0
             for feed_url in feeds_filename:
+                feed_count += 1
                 feed_url = feed_url.strip()
                 matches = re.search(r".*:\/\/(.*)\/@(.*)\.rss", feed_url)
-                filename = f"{matches.group(2)}@{matches.group(1)}.rss"
+                account_name = f"{matches.group(2)}@{matches.group(1)}"
+                filename = f"{account_name}.rss"
+                if self.cli_args.verbosity >= 1:
+                    total_feeds_digit_length = len(str(self.total_feeds))
+                    padded_feed_count = f"{feed_count}".zfill(
+                        total_feeds_digit_length)
+                    print(
+                        f"(FEED {padded_feed_count}/{self.total_feeds})",
+                        f"CHECKING FOR MEDIA FROM {account_name}")
                 self.download_rss_file(
                     feed_url,
                     dirname + "/" + filename)
@@ -182,21 +194,43 @@ class Fedimage:
     def download_rss_file(self, feed_url, filename):
         """Fetch a feed from a URL, and save it as the specified filename."""
         if DEBUG:
-            if self.cli_args.verbosity >= 1:
+            if self.cli_args.verbosity >= 2:
                 print(f"(FAKE) FETCHING FEED FROM {feed_url}")
             return
-        if self.cli_args.verbosity >= 1:
+        if self.cli_args.verbosity >= 2:
             print(f"FETCHING FEED FROM {feed_url}")
         feed_file = requests.get(feed_url, timeout=30).content
         with open(filename, 'wb') as handler:
             handler.write(feed_file)
 
 
+    def validate_feed_url(self, feed_url):
+        """Return a boolean based on feed_url looking proper."""
+        feed_regex = r"^https*:\/\/.*.rss$"
+        return bool(re.match(feed_regex, feed_url))
+
+
+    def validate_and_tally_feeds(self):
+        """
+        Validate the feeds in the feeds_file, and return their amount.
+
+        Returns an integer of the number of feeds in the feed file.
+        Raises an exception if there is an invalid feed URL in the file.
+        """
+        feed_count = 0
+        with open(self.feeds_file, encoding="utf-8") as feeds_file:
+            for line in feeds_file:
+                line = line.strip()
+                if self.validate_feed_url(line):
+                    feed_count += 1
+                else:
+                    raise SyntaxError(f'"{line}" is not a valid feed URL!')
+        return feed_count
+
+
     def parse_feed(self, feed_filename):
         """Parse an RSS feed file, and download any media."""
         creator = os.path.basename(os.path.splitext(feed_filename)[0])
-        if self.cli_args.verbosity >= 2:
-            print(f"CHECKING FOR MEDIA FROM {creator}")
 
         cursor = self.conn.cursor()
         cursor.execute(f"""
