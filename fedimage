@@ -334,9 +334,9 @@ class Item:
         if self.verbosity >= 1:
             print(f"DOWNLOADING {self.media_url}")
         img_data = requests.get(self.media_url, timeout=30).content
-        
+
         if self.verbosity >= 2:
-                print(f"SAVING AS {self.filename}")
+            print(f"SAVING AS {self.filename}")
         with open(self.filename, 'wb') as handler:
             handler.write(img_data)
 
